@@ -42,8 +42,10 @@ jobs:
             sleep 3
           done
           curl -s http://localhost:5001/health || { echo "backend failed to start"; cat /tmp/backend.log; exit 1; }
+          set +e
           FREYA_BASE_URL=http://localhost:5001 uv run python scripts/freya_simulation_smoke.py
           EXIT=$?
+          set -e
           echo "=== backend log tail ==="
           tail -100 /tmp/backend.log || true
           exit $EXIT

@@ -34,14 +34,23 @@ def get(path, **kw):
     return requests.get(f"{BASE}{path}", timeout=TIMEOUT, **kw)
 
 
-def wait_for(step, fn, tries=60, delay=5):
-    for _ in range(tries):
-        status, body = fn()
-        if status:
-            log(step, True, body)
-            return body
+def wait_for(step, fn, tries=150, delay=5, log_every=12):
+    """Poll fn() -> (done: bool, detail: str) until done or timeout.
+
+    Logs progress every ~log_every polls (~1 min) so a slow-but-working step
+    is distinguishable from a stuck one; on timeout, reports the last detail.
+    """
+    last = ""
+    for i in range(tries):
+        done, detail = fn()
+        last = detail
+        if done:
+            log(step, True, detail)
+            return detail
+        if (i + 1) % log_every == 0:
+            print(f"      ... {step}: {detail} ({i + 1}/{tries} polls)", flush=True)
         time.sleep(delay)
-    log(step, False, "timed out")
+    log(step, False, f"timed out after {tries * delay}s; last: {last}")
     return None
 
 
@@ -87,7 +96,6 @@ def main():
     if gd and isinstance(gd, dict):
         graph_id = gd.get("result", {}).get("graph_id") or gd.get("graph_id")
 
-    # resolve graph_id from project if not present
     if not graph_id:
         rr = get(f"/api/graph/project/{project_id}")
         if rr.status_code == 200:
@@ -104,7 +112,7 @@ def main():
     simulation_id = r.json().get("data", {}).get("simulation_id") or r.json().get("simulation_id")
     log("simulation_id", bool(simulation_id), str(simulation_id))
 
-    # 4. prepare (async)
+    # 4. prepare (async; generates agent profiles via the LLM — can be slow)
     r = post(
         "/api/simulation/prepare",
         json={"simulation_id": simulation_id, "use_llm_for_profiles": True, "parallel_profile_count": 2},
@@ -118,8 +126,8 @@ def main():
             return False, rr.text[:200]
         d = rr.json().get("data", {})
         done = d.get("status") == "completed" or d.get("already_prepared") or d.get("progress") == 100
-        return done, f"status={d.get('status')} progress={d.get('progress')}"
-    wait_for("simulation prepared", prepared, tries=40, delay=5)
+        return done, f"status={d.get('status')} progress={d.get('progress')} msg={str(d.get('message'))[:60]}"
+    wait_for("simulation prepared", prepared, tries=150, delay=5)
 
     # 5. start (1 round)
     r = post("/api/simulation/start", json={"simulation_id": simulation_id, "platform": "parallel", "max_rounds": 1})
@@ -133,7 +141,7 @@ def main():
         d = rr.json().get("data", {})
         rs = d.get("runner_status")
         return rs in ("completed", "idle", "stopped"), f"runner={rs} round={d.get('current_round')}/{d.get('total_rounds')} actions={d.get('total_actions_count')}"
-    wait_for("simulation finished", running_or_done, tries=60, delay=5)
+    wait_for("simulation finished", running_or_done, tries=150, delay=5)
 
     # 6. generate report
     r = post("/api/report/generate", json={"simulation_id": simulation_id})
@@ -147,7 +155,7 @@ def main():
             return False, rr.text[:200]
         d = rr.json().get("data", {})
         return d.get("status") == "completed", f"status={d.get('status')} progress={d.get('progress')}"
-    wait_for("report completed", report_done, tries=60, delay=5)
+    wait_for("report completed", report_done, tries=150, delay=5)
 
     log("SMOKE COMPLETE", True, f"simulation_id={simulation_id} report_id={report_id}")
 
