@@ -151,6 +151,19 @@ def main():
         return done, f"runner={rs} round={cur}/{total} actions={actions}"
     wait_for("simulation finished", running_or_done, tries=60, delay=5)
 
+    # 5b. The runner lingers in "running" after its rounds; the report requires a
+    #     terminal status, so stop it explicitly (data is already written).
+    r = post("/api/simulation/stop", json={"simulation_id": simulation_id})
+    log("simulation/stop", r.status_code == 200, f"{r.status_code} {r.text[:160]}")
+
+    def stopped():
+        rr = get(f"/api/simulation/{simulation_id}/run-status")
+        if rr.status_code != 200:
+            return False, rr.text[:160]
+        rs = rr.json().get("data", {}).get("runner_status")
+        return rs in ("stopped", "completed", "idle", "failed"), f"runner={rs}"
+    wait_for("simulation stopped", stopped, tries=30, delay=5)
+
     # 6. generate report
     r = post("/api/report/generate", json={"simulation_id": simulation_id})
     ok = r.status_code == 200 and r.json().get("success", True)
