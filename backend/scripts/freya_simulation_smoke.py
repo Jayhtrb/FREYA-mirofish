@@ -119,9 +119,11 @@ def main():
     )
     ok = r.status_code == 200 and r.json().get("success", True)
     log("simulation/prepare", ok, f"{r.status_code} {r.text[:200]}")
+    prepare_task_id = (r.json().get("data") or {}).get("task_id")
+    log("prepare_task_id", bool(prepare_task_id), str(prepare_task_id))
 
     def prepared():
-        rr = post("/api/simulation/prepare/status", json={"simulation_id": simulation_id})
+        rr = post("/api/simulation/prepare/status", json={"task_id": prepare_task_id, "simulation_id": simulation_id})
         if rr.status_code != 200:
             return False, rr.text[:200]
         d = rr.json().get("data", {})
@@ -147,14 +149,17 @@ def main():
     r = post("/api/report/generate", json={"simulation_id": simulation_id})
     ok = r.status_code == 200 and r.json().get("success", True)
     log("report/generate", ok, f"{r.status_code} {r.text[:200]}")
-    report_id = r.json().get("data", {}).get("report_id") or r.json().get("report_id")
+    data = r.json().get("data") or {}
+    report_id = data.get("report_id") or r.json().get("report_id")
+    report_task_id = data.get("task_id")
 
     def report_done():
-        rr = get(f"/api/report/generate/status?report_id={report_id}")
+        rr = post("/api/report/generate/status", json={"task_id": report_task_id})
         if rr.status_code != 200:
             return False, rr.text[:200]
         d = rr.json().get("data", {})
-        return d.get("status") == "completed", f"status={d.get('status')} progress={d.get('progress')}"
+        done = d.get("status") == "completed" or d.get("progress") == 100
+        return done, f"status={d.get('status')} progress={d.get('progress')}"
     wait_for("report completed", report_done, tries=150, delay=5)
 
     log("SMOKE COMPLETE", True, f"simulation_id={simulation_id} report_id={report_id}")
