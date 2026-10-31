@@ -142,8 +142,14 @@ def main():
             return False, rr.text[:200]
         d = rr.json().get("data", {})
         rs = d.get("runner_status")
-        return rs in ("completed", "idle", "stopped"), f"runner={rs} round={d.get('current_round')}/{d.get('total_rounds')} actions={d.get('total_actions_count')}"
-    wait_for("simulation finished", running_or_done, tries=150, delay=5)
+        cur = d.get("current_round") or 0
+        total = d.get("total_rounds") or 0
+        actions = d.get("total_actions_count") or 0
+        # The runner can linger in "running" after its rounds complete; treat
+        # "rounds finished AND actions produced" as done so we can generate a report.
+        done = rs in ("completed", "idle", "stopped") or (bool(total) and cur >= total and actions > 0)
+        return done, f"runner={rs} round={cur}/{total} actions={actions}"
+    wait_for("simulation finished", running_or_done, tries=60, delay=5)
 
     # 6. generate report
     r = post("/api/report/generate", json={"simulation_id": simulation_id})
